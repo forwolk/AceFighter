@@ -13,6 +13,8 @@ import * as THREE from 'three';
 
 const VERT = /* glsl */`
   uniform float uTime, uDist, uAmp;
+  uniform mat4 uReflMat;
+  varying vec4 vRefl;
   varying vec3 vWorld;
   varying vec2 vP;
   varying vec3 vGN;
@@ -45,6 +47,7 @@ const VERT = /* glsl */`
     vec3 world = p + disp;
     vWorld = (modelMatrix * vec4(world, 1.0)).xyz;
     vP = vec2(vWorld.x, vWorld.z - uDist);
+    vRefl = uReflMat * vec4(vWorld, 1.0);
     vec4 mvPosition = viewMatrix * vec4(vWorld, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -55,6 +58,7 @@ const FRAG = /* glsl */`
   uniform sampler2D uN0, uN1, uFoam, uSky;
   uniform mat3 uSkyRot;
   uniform vec3 uSunDir, uSunColor, uDeep, uShallow, uSkyTint;
+  uniform sampler2D uRefl; uniform float uReflMix; varying vec4 vRefl;
   uniform vec2 uWind;
   uniform float uTime, uFoamAmt, uSunStrength, uSkyMix, uRoughBase, uFresMul, uDetailMul;
   varying vec3 vWorld; varying vec2 vP; varying vec3 vGN; varying float vCrest;
@@ -77,21 +81,26 @@ const FRAG = /* glsl */`
     vec3 nB = nrm(uN0, (rot * vP + wind * 0.7) / 247.0 + vec2(0.37, 0.61));
     vec3 nC = nrm(uN1, (vP + wind * 1.8) / 48.0);
     float chop = 1.0 - smoothstep(200.0, 1600.0, dist);           // unresolved chop becomes roughness instead
-    vec3 detail = ((nA + nB) * 0.3 + nC * chop * 0.8) * uDetailMul;
+    vec3 detail = ((nA + nB) * 0.5 + nC * chop * 0.8) * uDetailMul;
     vec3 N = normalize(vec3(vGN.x + detail.x, 1.0, vGN.z + detail.z));
     float NdV = max(dot(N, V), 1e-3);
 
     // Fresnel + sky reflection (blurrier with distance)
-    float F = clamp((0.04 + 0.96 * pow(1.0 - NdV, 5.0)) * uFresMul, 0.0, 0.8);   // real seas from low altitude are mostly sky
+    // sky share tapers with distance: the far sea keeps its blue body instead of turning into horizon haze
+    float F = clamp((0.04 + 0.96 * pow(1.0 - NdV, 5.0)) * uFresMul, 0.0, 0.8) * mix(1.0, 0.55, smoothstep(400.0, 3000.0, dist));
     vec3 R = reflect(-V, N); R.y = max(R.y, 0.02);
     float lod = 1.0 + smoothstep(300.0, 4000.0, dist) * 3.0;
     vec3 sky = textureLod(uSky, equirect(uSkyRot * R), lod).rgb * uSkyTint;
+    if (uReflMix > 0.001) {   // planar reflection of the scene (walls, islands, jet), distorted by the wave normal
+      vec2 ruv = clamp(vRefl.xy / vRefl.w + N.xz * vec2(0.07, 0.1) * (1.0 - 0.6 * smoothstep(300.0, 2500.0, dist)), 0.001, 0.999);
+      sky = mix(sky, texture2D(uRefl, ruv).rgb, uReflMix);
+    }
 
     // body: desaturated navy, slightly lighter where the sun hits, a hint of green-blue subsurface in crests
     float NdL = max(dot(N, uSunDir), 0.0);
     float sunBack = pow(max(dot(V, -vec3(uSunDir.x, 0.0, uSunDir.z)), 0.0), 2.0);
     float sss = smoothstep(0.55, 1.0, vCrest) * (0.3 + 0.7 * sunBack) * max(uSunDir.y, 0.1);
-    vec3 body = uDeep * (0.65 + 0.35 * NdL) + uShallow * sss * 0.35;
+    vec3 body = uDeep * (0.4 + 0.75 * NdL) + uShallow * sss * 0.35;   // wave faces toward the sun read lighter
     vec3 col = mix(body, sky, F * uSkyMix);
 
     // sun: GGX band whose roughness grows with distance (broad soft glitter path, not sparkle)
@@ -101,7 +110,7 @@ const FRAG = /* glsl */`
     float D = ggx(max(dot(N, H), 0.0), a);
     float Fs = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
     float spec = D * Fs / (4.0 * NdV * max(NdL, 1e-3) + 0.05) * NdL;
-    spec = spec / (1.0 + spec * 0.2);   // soft-limit the glitter: a low sun must not blow the whole near sea to white
+    spec = spec / (1.0 + spec * 0.12);   // soft-limit the glitter: a low sun must not blow the whole near sea to white
     col += uSunColor * spec * uSunStrength * 0.9;
 
     // storm foam from the spectrum crests
@@ -130,6 +139,7 @@ export function createOcean({ n0, n1, foamMap, size = 9000, segments = 200 }) {
     uDeep: { value: new THREE.Color('#86a6c4') }, uShallow: { value: new THREE.Color('#2a8a90') },
     uSkyTint: { value: new THREE.Color(1, 1, 1) }, uSkyMix: { value: 1 }, uWind: { value: new THREE.Vector2(0.9, 3.0) },
     uFoamAmt: { value: 0 }, uSunStrength: { value: 1 }, uRoughBase: { value: 0.09 }, uFresMul: { value: 4.0 }, uDetailMul: { value: 1 },
+    uRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uReflMix: { value: 0 },
   }]);
   uniforms.uN0.value = n0; uniforms.uN1.value = n1; uniforms.uFoam.value = foamMap;
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG, fog: true });

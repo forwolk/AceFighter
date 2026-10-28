@@ -106,6 +106,7 @@ class ScenePass extends Pass {
   }
   setSize(w, h) { this.target.setSize(w, h); }
   render(renderer, writeBuffer) {
+    renderReflection(renderer);
     const autoClear = renderer.autoClear;
     renderer.autoClear = false;
     renderer.setRenderTarget(this.target); renderer.clear();
@@ -114,6 +115,41 @@ class ScenePass extends Pass {
     this.quad.render(renderer);   // resolves the MSAA target
     renderer.autoClear = autoClear;
   }
+}
+// Planar water reflection: the scene mirrored through the water plane into a half-res target, which the
+// ocean shader samples with the wave normal as distortion (fjord walls, islands and the jet reflect; the
+// sky dome alone made the water read as a pale mirror next to dark terrain). Oblique near plane = water
+// plane (Lengyel), so what is under the surface never shows in the mirror. Reuses this frame's shadow maps.
+const reflRT = new THREE.WebGLRenderTarget(640, 360, { type: THREE.HalfFloatType });
+const reflCam = new THREE.PerspectiveCamera();
+const _rm = new THREE.Matrix4(), _rv = new THREE.Vector3(), _ru = new THREE.Vector3(), _rq = new THREE.Vector4(), _rc = new THREE.Vector4(), _rp = new THREE.Plane();
+function renderReflection(renderer) {
+  const on = ocean && ocean.mesh.visible && !G.noReflection && camera.position.y > ocean.mesh.position.y + 0.5;
+  if (ocean) ocean.uniforms.uReflMix.value = on ? 1 : 0;
+  if (!on) return;
+  const planeY = ocean.mesh.position.y, cp = camera.position;
+  _rm.extractRotation(camera.matrixWorld);
+  _rv.set(0, 0, -1).applyMatrix4(_rm).add(cp); _rv.y = 2 * planeY - _rv.y;
+  _ru.set(0, 1, 0).applyMatrix4(_rm); _ru.y = -_ru.y;
+  reflCam.position.set(cp.x, 2 * planeY - cp.y, cp.z);
+  reflCam.up.copy(_ru); reflCam.lookAt(_rv);
+  reflCam.near = camera.near; reflCam.far = camera.far; reflCam.fov = camera.fov; reflCam.aspect = camera.aspect;
+  reflCam.updateProjectionMatrix(); reflCam.updateMatrixWorld();
+  _rp.set(new THREE.Vector3(0, 1, 0), -planeY).applyMatrix4(reflCam.matrixWorldInverse);
+  _rc.set(_rp.normal.x, _rp.normal.y, _rp.normal.z, _rp.constant);
+  const e = reflCam.projectionMatrix.elements;
+  _rq.set((Math.sign(_rc.x) + e[8]) / e[0], (Math.sign(_rc.y) + e[9]) / e[5], -1, (1 + e[10]) / e[14]);
+  _rc.multiplyScalar(2 / _rc.dot(_rq));
+  e[2] = _rc.x; e[6] = _rc.y; e[10] = _rc.z + 1; e[14] = _rc.w;
+  ocean.uniforms.uReflMat.value.set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1).multiply(reflCam.projectionMatrix).multiply(reflCam.matrixWorldInverse);
+  ocean.uniforms.uRefl.value = reflRT.texture;
+  ocean.mesh.visible = false;
+  const shadowAuto = renderer.shadowMap.autoUpdate;
+  renderer.shadowMap.autoUpdate = false;
+  renderer.setRenderTarget(reflRT); renderer.clear();
+  renderer.render(scene, reflCam);
+  renderer.shadowMap.autoUpdate = shadowAuto;
+  ocean.mesh.visible = true;
 }
 const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }));
 composer.addPass(new ScenePass(scene, camera, sceneRT));
@@ -192,7 +228,7 @@ const MODEL_CFG = {
 // Equirectangular skies: horizon colour (for fog) and sun position in texture UV were sampled from the images.
 const SKIES = {
   // sunI is the directional sun; hemi the ambient fill (kept to roughly a third so surfaces have a shadow side).
-  day: { url: 'assets/sky/day.jpg', hor: '#9ab6d6', sun: [0.977, 0.31], sunCol: '#fff4e0', sunI: 3.8, hemi: 0.38 },   // v lowered from 0.148: lights from ~34 deg, like the reference
+  day: { url: 'assets/sky/day.jpg', hor: '#9ab6d6', sun: [0.977, 0.31], sunCol: '#fff4e0', sunI: 4.4, hemi: 0.3 },   // v lowered from 0.148: lights from ~34 deg, like the reference
   sunset: { url: 'assets/sky/sunset.jpg', hor: '#c08080', sun: [0.174, 0.464], sunCol: '#ffb070', sunI: 2.8, hemi: 0.32, flare: 0.45, sat: 0.7 },
   storm: { url: 'assets/sky/storm.jpg', hor: '#43525e', sun: [0.301, 0.421], sunCol: '#b0c0d0', sunI: 1.4, hemi: 1.1, flare: 0, bright: 1.6, sat: 1.0 },
   space: { url: 'assets/sky/space.jpg', hor: '#5d7fa8', sun: [0.758, 0.499], sunCol: '#ffffff', sunI: 3.4, hemi: 0.4, bright: 0.9 },
@@ -202,7 +238,7 @@ const UI_FILES = ['emblem', 'bar', 'gauge', 'logo', 'missile', 'panel'];
 // _n.jpg = world normal; _m.jpg = sediment / exposed rock / water flow masks; .json = scale.
 const TERRAIN_BIOMES = ['valley', 'canyon', 'alpine', 'dunes'];
 // Seamless aerial terrain textures (Scenario Texture), sampled in world space by the terrain shader.
-const TERRAIN_FILES = ['meadow', 'rock', 'canyon', 'dunes', 'snow'];
+const TERRAIN_FILES = ['meadow', 'rock', 'canyon', 'dunes', 'snow', 'forest', 'tundra'];
 
 const TEMPLATES = {}, SKY_TEX = {}, ENV_TEX = {}, UI = {}, TERRAIN_TEX = {}, TERRAIN_NRM = {}, TERRAIN_RGH = {}, OCEAN_TEX = {}, BIOMES = {}, CLOUD_DATA = {};
 
@@ -581,10 +617,11 @@ const terrainU = {
   uRock: { value: new THREE.Color('#ffffff') }, uSnow: { value: -1000 },
   uRockMap: { value: null }, uTile: { value: 260 }, uRockTile: { value: 160 },
   uGndNrm: { value: null }, uRockNrm: { value: null }, uGndRgh: { value: null }, uRockRgh: { value: null },
+  uForestMap: { value: null }, uForestNrm: { value: null }, uForestTile: { value: 110 },   // PATINA conifer canopy, ~110 m per repeat
   uRghInv: { value: 0 }, uNrmStr: { value: 1 },
-  uForest: { value: new THREE.Vector2(-1, -1) }, uRiverCol: { value: new THREE.Color('#1d4a5e') }, uForestDark: { value: 0.15 }, uSunDirW: { value: new THREE.Vector3(0, 1, 0) }, uTShadow: { value: 1 },
+  uForest: { value: new THREE.Vector2(-1, -1) }, uRiverCol: { value: new THREE.Color('#1d4a5e') }, uForestDark: { value: 0.75 }, uSunDirW: { value: new THREE.Vector3(0, 1, 0) }, uTShadow: { value: 1 },
   // dynamic range: lit faces brighter, shadowed slopes darker (the reference spans p5≈1 .. p95≈98)
-  uAlbedo: { value: 1.5 }, uAmbScale: { value: 1.2 },
+  uAlbedo: { value: 1.0 }, uAmbScale: { value: 0.7 },
 };
 const FLAT_NRM = new THREE.DataTexture(new Uint8Array([128, 128, 255, 255]), 1, 1);
 const FLAT_RGH = new THREE.DataTexture(new Uint8Array([235, 235, 235, 255]), 1, 1);
@@ -637,8 +674,8 @@ function terrainMaterial(opts) {
           vec3 objectTangent = vec3(1.0, 0.0, 0.0);
         #endif`)
       .replace('#include <begin_vertex>', 'vec3 transformed = vec3(position.x, th, position.z);');
-    sh.fragmentShader = `uniform vec3 uRock, uRiverCol; uniform vec2 uForest; uniform vec3 uSunDirW; uniform float uTShadow, uAmp, uWorldW, uWorldL; uniform float uSnow, uTile, uRockTile, uRghInv, uNrmStr, uHMax, uForestDark, uAlbedo, uAmbScale;
-      uniform sampler2D uRockMap, uGndNrm, uRockNrm, uGndRgh, uRockRgh, uTNormal, uMasks, uHeight;
+    sh.fragmentShader = `uniform vec3 uRock, uRiverCol; uniform vec2 uForest; uniform vec3 uSunDirW; uniform float uTShadow, uAmp, uWorldW, uWorldL, uForestTile; uniform float uSnow, uTile, uRockTile, uRghInv, uNrmStr, uHMax, uForestDark, uAlbedo, uAmbScale;
+      uniform sampler2D uRockMap, uGndNrm, uRockNrm, uGndRgh, uRockRgh, uTNormal, uMasks, uHeight, uForestMap, uForestNrm;
       varying float vTH; varying vec3 vTW; varying vec2 vTUV;\n` + sh.fragmentShader
       .replace('#include <map_fragment>', `
         // terrain self-shadowing: march the heightmap toward the sun (soft, penumbra widens with distance);
@@ -664,7 +701,7 @@ function terrainMaterial(opts) {
         vec3 tnM = textureLod(uTNormal, vTUV, 2.5).xyz * 2.0 - 1.0;   // macro normal (~30 m) for zoning
         float mslope = 1.0 - normalize(vec3(tnM.x, max(tnM.y, 0.05), -tnM.z)).y;
         vec3 bw = pow(abs(Ng), vec3(4.0)); bw /= (bw.x + bw.y + bw.z);
-        float nearF = 1.0 - smoothstep(60.0, 450.0, length(vViewPosition));
+        float nearF = 1.0 - smoothstep(200.0, 1600.0, length(vViewPosition));
         vec2 guv = P.xz / uTile;
         vec2 ruv = mat2(0.7986, 0.6018, -0.6018, 0.7986) * P.xz / (uTile * 1.73) + vec2(0.37, 0.11);
         vec3 g1 = texture2D(map, guv).rgb;
@@ -679,7 +716,10 @@ function terrainMaterial(opts) {
         // forest band
         float forestAmt = uForest.x >= 0.0 ? smoothstep(uForest.x, uForest.x + 30.0, vTH) * (1.0 - smoothstep(uForest.y, uForest.y + 70.0, vTH)) * (1.0 - smoothstep(0.55, 0.8, mslope)) : 0.0;
         forestAmt *= mix(1.0, smoothstep(0.3, 0.6, 1.0 - g2.g) * 0.4, masks.r);   // dense on slopes, patchy clearings on sediment floors
-        ground = mix(ground, ground * vec3(0.3, 0.4, 0.28) * uForestDark * (0.8 + 0.6 * gd.g), forestAmt);
+        // conifer canopy texture (two rotated copies so the repeat never reads), uForestDark = canopy brightness
+        vec2 fuv = P.xz / uForestTile;
+        vec3 fcol = mix(texture2D(uForestMap, fuv).rgb, texture2D(uForestMap, mat2(0.7986, 0.6018, -0.6018, 0.7986) * fuv * 0.83 + vec2(0.21, 0.57)).rgb, mixw);
+        ground = mix(ground, fcol * vec3(0.72, 0.88, 0.98) * uForestDark * (0.85 + 0.3 * g2.g), forestAmt);
         // rock: steep faces and eroded (mask) faces, strata texture triplanar
         vec2 ux = P.zy / uRockTile, uy = P.xz / uRockTile, uz = P.xy / uRockTile;
         vec3 rock = texture2D(uRockMap, ux).rgb * bw.x + texture2D(uRockMap, uy).rgb * bw.y + texture2D(uRockMap, uz).rgb * bw.z;
@@ -687,7 +727,8 @@ function terrainMaterial(opts) {
         // water flow darkens gullies (wet rock / scree)
         rock *= 1.0 - masks.b * 0.35;
         // snow above the line, not on steep faces, thinner where water flows
-        float snowAmt = uSnow > -999.0 ? smoothstep(uSnow, uSnow + 60.0, vTH) * (1.0 - smoothstep(0.45, 0.7, slope)) * (1.0 - masks.b * 0.5) : 0.0;
+        // snow lies in gullies (flow mask) and on the lighter strata, broken by dark rock bands and steep faces
+        float snowAmt = uSnow > -999.0 ? smoothstep(uSnow, uSnow + 60.0, vTH) * (1.0 - smoothstep(0.35, 0.62, slope)) * clamp(0.78 + masks.b * 0.6 + (rock.r - 0.5) * 1.0, 0.0, 1.0) : 0.0;
         vec3 tcol = mix(ground, rock * uRock * 0.85, rockAmt);
         tcol = mix(tcol, vec3(0.97, 0.98, 1.0) * (0.95 + 0.15 * g1.r), snowAmt);
         float riverAmt = river * (1.0 - smoothstep(0.1, 0.3, slope));
@@ -704,6 +745,7 @@ function terrainMaterial(opts) {
         roughnessFactor = mix(roughnessFactor, 0.12, riverAmt);`)
       .replace('#include <normal_fragment_begin>', `
         vec3 tnG = texture2D(uGndNrm, guv).xyz * 2.0 - 1.0;
+        tnG = mix(tnG, texture2D(uForestNrm, P.xz / uForestTile).xyz * 2.0 - 1.0, forestAmt);
         vec3 tnX = texture2D(uRockNrm, ux).xyz * 2.0 - 1.0;
         vec3 tnY = texture2D(uRockNrm, uy).xyz * 2.0 - 1.0;
         vec3 tnZ = texture2D(uRockNrm, uz).xyz * 2.0 - 1.0;
@@ -989,18 +1031,18 @@ const PROP_GEN = {
 const STAGES = [
   { name: 'BLUE PACIFIC', sky: 'day', fog: [1800, 7000], water: '#2c5080', shallow: '#2a8a90', props: { island: 1 }, propCount: 7,
     cloudLayer: { coverage: 0.22, bottom: 300, top: 640 }, enemies: { fighter: 4, chaser: 3, swoop: 2 }, boss: 'SKY LEVIATHAN' },
-  { name: 'DUNE SEA', sky: 'day', fog: [600, 2900], ground: 'sand', terrain: { biome: 'dunes', amp: 1, rock: '#ffe0b0', tex: 'dunes', rockTex: 'canyon', tile: 240, rockTile: 200 },
+  { name: 'DUNE SEA', sky: 'day', fog: [600, 2900], ground: 'sand', terrain: { biome: 'dunes', amp: 1, rock: '#ffe0b0', tex: 'dunes', rockTex: 'canyon', tile: 240, rockTile: 200 , amb: 1.0 },
     props: { cactus: 1 }, propCount: 0, cloudLayer: { coverage: 0.2, bottom: 450, top: 820 }, enemies: { fighter: 3, chaser: 3, swoop: 2, sam: 2 }, boss: 'SANDSTORM' },
-  { name: 'EMERALD VALLEY', sky: 'day', fog: [450, 2600], ground: 'grass', terrain: { biome: 'valley', amp: 1, rock: '#ffffff', snow: 330, forest: [0, 300], sea: 21, seaCol: '#2e4458', riverCol: '#1e4f66', tex: 'meadow', rockTex: 'rock', tile: 420, rockTile: 170 },
+  { name: 'EMERALD VALLEY', sky: 'day', fog: [650, 3400], ground: 'grass', terrain: { biome: 'valley', amp: 1, rock: '#ffffff', snow: 330, forest: [0, 300], sea: 21, seaCol: '#2e4458', riverCol: '#1e4f66', tex: 'tundra', rockTex: 'rock', tile: 420, rockTile: 170 },
     props: { trees: 1 }, propCount: 0, cloudLayer: { coverage: 0.2, bottom: 340, top: 720 }, enemies: { fighter: 3, chaser: 4, swoop: 2, sam: 1 }, boss: 'IRON HERON' },
-  { name: 'RED CANYON', sky: 'sunset', fog: [350, 2300], ground: 'rock', terrain: { biome: 'canyon', amp: 1, rock: '#ffffff', riverCol: '#5a4a30', tex: 'canyon', rockTex: 'canyon', tile: 300, rockTile: 150, nrm: 0.9 }, exposure: 1.0,
+  { name: 'RED CANYON', sky: 'sunset', fog: [350, 2300], ground: 'rock', terrain: { biome: 'canyon', amp: 1, rock: '#ffffff', riverCol: '#5a4a30', tex: 'canyon', rockTex: 'canyon', tile: 300, rockTile: 150, nrm: 0.9 , amb: 0.9 }, exposure: 1.0,
     props: { rockSmall: 1 }, propCount: 26, cloudLayer: { coverage: 0.3, bottom: 380, top: 820 }, enemies: { fighter: 3, chaser: 3, swoop: 1, sam: 2 }, boss: 'CANYON KING' },
-  { name: 'HARBOR DUSK', sky: 'sunset', fog: [500, 3000], ground: 'sand', terrain: { biome: 'dunes', amp: 0.45, rock: '#ffffff', tex: 'dunes', rockTex: 'canyon', tile: 260, rockTile: 200, nrm: 0.6 },
+  { name: 'HARBOR DUSK', sky: 'sunset', fog: [500, 3000], ground: 'sand', terrain: { biome: 'dunes', amp: 0.45, rock: '#ffffff', tex: 'dunes', rockTex: 'canyon', tile: 260, rockTile: 200, nrm: 0.6 , amb: 1.2 },
     props: { tower: 4, block: 6 }, propCount: 110, cloudLayer: { coverage: 0.16, bottom: 520, top: 900 }, stars: 1, enemies: { fighter: 3, chaser: 4, swoop: 3, sam: 1 }, boss: 'NIGHT CROWN' },
   { name: 'STORM FRONT', sky: 'storm', fog: [600, 3600], exposure: 1.1, water: '#5a7080', shallow: '#3d6a74', props: { seaRock: 1 }, propCount: 0,
     // the storm panorama already is the overcast; the volumetric layer is just low ragged scud under it
     cloudLayer: { coverage: 0.3, bottom: 160, top: 700, density: 1.3, sun: 0.5, amb: 2.2, hj: 0.6 }, storm: true, enemies: { fighter: 4, chaser: 4, swoop: 2 }, boss: 'THUNDERHEAD' },
-  { name: 'GLACIER LINE', sky: 'day', fog: [600, 2900], ground: 'ice', terrain: { biome: 'alpine', amp: 1, rock: '#9aa6b4', snow: 240, forest: [0, 210], sea: 17, seaCol: '#2a3e50', riverCol: '#2a4858', tex: 'meadow', rockTex: 'rock', tile: 360, rockTile: 160 },
+  { name: 'GLACIER LINE', sky: 'day', fog: [700, 3600], ground: 'ice', terrain: { biome: 'alpine', amp: 1, rock: '#9aa6b4', snow: 240, forest: [0, 210], sea: 17, seaCol: '#2a3e50', riverCol: '#2a4858', tex: 'tundra', rockTex: 'rock', tile: 360, rockTile: 160 },
     props: { berg: 1 }, propCount: 0, cloudLayer: { coverage: 0.22, bottom: 360, top: 760 }, exposure: 0.8, enemies: { fighter: 4, chaser: 4, swoop: 2, sam: 2 }, boss: 'POLAR WARDEN' },
   // No ground at all: a dense volumetric cloud deck just below the jet stands in for the surface.
   { name: 'EDGE OF SPACE', sky: 'space', fog: [900, 3400], ground: 'cloud', noGround: true, terrain: { biome: 'dunes', amp: 0, rock: '#ffffff' },
@@ -1093,11 +1135,12 @@ function buildStage(st) {
     u.uSunColor.value.set(sky.sunCol);
     u.uDeep.value.set(st.water || st.terrain.seaCol || '#3b5468'); u.uShallow.value.set(st.shallow || '#2a8a90');
     u.uAmp.value = st.storm ? 2.4 : fjord ? 0.25 : 1;
-    u.uFoamAmt.value = st.storm ? 0.7 : 0;
+    u.uFoamAmt.value = st.storm ? 0.7 : fjord ? 0 : 0.22;
     u.uSkyMix.value = st.storm ? 0.7 : fjord ? 0.6 : 1;
     u.uRoughBase.value = st.storm ? 0.16 : fjord ? 0.07 : 0.09;
     // sky reflection share: the reference sea keeps a saturated blue body; only the storm sea is mostly sky
     u.uFresMul.value = st.storm ? 4.0 : fjord ? 2.0 : (st.fresnel ?? 1.5);
+    u.uDetailMul.value = st.storm ? 1 : fjord ? 1 : 1.6;
     u.uWind.value.set(st.storm ? 2.5 : 0.9, st.storm ? 7 : 3);
     u.uSunStrength.value = st.storm ? 0.12 : 1;
     u.uSkyTint.value.set(st.storm ? '#c8d0d8' : '#ffffff');
@@ -1122,8 +1165,10 @@ function buildStage(st) {
     terrainU.uGndNrm.value = TERRAIN_NRM[t.tex] || FLAT_NRM;
     terrainU.uRockNrm.value = TERRAIN_NRM[t.rockTex] || TERRAIN_NRM[t.tex] || FLAT_NRM;
     terrainU.uGndRgh.value = TERRAIN_RGH[t.tex] || FLAT_RGH;
+    terrainU.uForestMap.value = TERRAIN_TEX.forest; terrainU.uForestNrm.value = TERRAIN_NRM.forest;
     terrainU.uRockRgh.value = TERRAIN_RGH[t.rockTex] || TERRAIN_RGH[t.tex] || FLAT_RGH;
-    terrainU.uNrmStr.value = t.nrm ?? 0.8;
+    terrainU.uNrmStr.value = t.nrm ?? 1.1;
+    terrainU.uAmbScale.value = t.amb ?? 0.7;   // fjords are hard-lit; desert / dusk stages keep a hazy fill
     terrainU.uRghInv.value = TERRAIN_RGH[t.tex] ? 1 : 0; // PATINA returns smoothness, not roughness
     terrainU.uForest.value.set(t.forest ? t.forest[0] : -1, t.forest ? t.forest[1] : -1);
     terrainU.uRiverCol.value.set(t.riverCol || '#1d4a5e');

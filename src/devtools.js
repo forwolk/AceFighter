@@ -90,6 +90,7 @@ export function createDevTools(refs) {
     // switches
     'flare': v => { R().G.noFlare = !Number(v); },
     'flareMul': v => { R().G.flareMul = v; },
+    'reflection': v => { R().G.noReflection = !Number(v); },
     'clouds': v => ablate('clouds', !!Number(v)),
     'shadows': v => ablate('shadows', !!Number(v)),
     'post': v => ablate('post', !!Number(v)),
@@ -124,6 +125,7 @@ export function createDevTools(refs) {
       case 'terrainDetail': r.terrainU.uNrmStr.value = on ? 1.2 : 0; break;
       case 'flare': r.G.noFlare = !on; break;
       case 'jet': r.P.obj.visible = on; r.G.hideJet = !on; break;
+      case 'reflection': r.G.noReflection = !on; break;
       default: console.warn('[devtools] unknown ablation', name); return false;
     }
     return true;
