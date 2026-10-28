@@ -48,14 +48,64 @@ Legend: `[ ]` todo · `[x]` done · `[~]` partially done / follow-up noted
 
 ## 6. Photoreal water, terrain & high-poly fighters  *(round 2)*
 
-- [ ] Plan textures: 2048×2048+ seamless, PBR maps (albedo + normal + roughness/height) per surface
-- [ ] Ocean: Scenario-generated 2048 wave textures → normal maps (two scales)
-- [ ] Ocean shader: Gerstner wave displacement, layered scrolling normals, Fresnel sky reflection from the panorama, sun glitter, subsurface colour in crests, crest foam, distance-based detail fade
-- [ ] Terrain: 2048 albedo per biome + extracted normal/roughness maps
-- [ ] Terrain shader: PBR (MeshStandardMaterial) with triplanar albedo + normal mapping, macro/detail blending, slope/height material layering
-- [ ] Fighters: regenerate player / enemy / boss at a much higher face count (and better texture fidelity)
-- [ ] Re-measure orientation, scale and nozzle positions for the new meshes
-- [ ] Verify all stages + flows; note frame-rate cost
+- [x] Plan textures: 2048×2048+ seamless, PBR maps (albedo + normal + roughness/height) per surface
+- [x] Ocean: Scenario-generated 2048 wave textures → normal maps (two scales)
+- [x] Ocean shader: Gerstner wave displacement, layered scrolling normals, Fresnel sky reflection from the panorama, sun glitter, subsurface colour in crests, crest foam, distance-based detail fade
+- [x] Terrain: 2048 albedo per biome + extracted normal/roughness maps
+- [x] Terrain shader: PBR (MeshStandardMaterial) with triplanar albedo + normal mapping, macro/detail blending, slope/height material layering
+- [x] Fighters: regenerate player / enemy / boss at a much higher face count (and better texture fidelity)
+- [x] Re-measure orientation, scale and nozzle positions for the new meshes
+- [x] Verify all stages + flows; note frame-rate cost
+
+## 7. Rendering parity: lighting, exposure, shadows  *(round 3 — measured against the reference)*
+
+Measured gap (ocean/valley frames): sky RGB ref 0.42/0.59/0.89 vs ours 0.82/0.84/0.88; blown pixels
+ref 1% vs ours 11.6%; deep-shadow pixels (valley) ref 30% vs ours 0.9%; jet luma spread ref 0.21–0.33 vs
+ours 0.10–0.19. Root cause: fill light ≈ sun, bloom on ordinary surfaces, midtone-lifting grade, no shadows.
+
+- [x] A. Lighting/exposure rebuild: sun dominant, ambient + IBL ≈ ⅓, exposure ~0.65, bloom only on emitters,
+      grade → gentle post-tonemap filmic curve. Targets: blown < 2%, valley dark > 20%, sky sat > 0.4
+- [x] B. Sun shadow maps: jet self-shadowing, terrain/cliff shadows into valleys
+- [x] C. Afterburner: nozzle-width, short, blue-white core; glow ~¼ size
+- [x] D. Ocean: darker deep colour, less grazing reflection, fine ripples to the horizon, stronger sun path,
+      crisp horizon, irregular swell, distant island silhouettes
+- [x] E. Terrain: steeper/taller corridor walls, river on valley floors, zoned materials by height+slope with
+      real contrast, rotated second sample vs repetition
+- [x] F. Aerial perspective: height/distance haze with separate desaturation, replacing flat fog
+- [x] G. Volumetric-style cloud banks (sun-shaded undersides, flyable) replacing sprites
+- [x] H. Anti-aliasing / soft filter pass
+
+## 8. Rebuild clouds, terrain, water on industry techniques  *(round 4 — technique, not tuning)*
+
+Findings: reference clouds are soft wispy layers flown through (trueSKY / Nubis-style ray-marched
+volumetrics); reference terrain has DEM-like ridgelines, strata, snow caps, forest bands (eroded
+heightmaps); reference sea is desaturated navy with a broad soft sun band (wind spectrum + microfacet sun).
+Sprite clusters, sine-wave heightfields and tiled bump maps cannot produce these, whatever the tuning.
+
+- [x] A. Volumetric clouds: ray-marched slab (3D Perlin-Worley base + Worley detail erosion, coverage/weather
+      map, height gradient), Beer-Lambert + powder, dual-lobe Henyey-Greenstein, cone-sampled sun shadow,
+      half-res with depth-aware composite; in-cloud fog instead of white flash. Sprite banks removed.
+- [x] B. Terrain: offline eroded heightmaps (ridged fBM + domain warp + droplet hydraulic erosion) with
+      carved flight corridor and river; normal map + erosion/sediment/flow masks; GPU heightmap sampling;
+      materials driven by slope/height/sediment (rock strata, forest band, snow with slope limit)
+- [x] C. Ocean: Phillips-spectrum normal cascades (offline FFT) scrolling with wind, GGX sun glitter with
+      distance-dependent roughness, navy desaturated body colour, mild Fresnel, soft horizon band,
+      Gerstner swell reduced to subtle; whitecaps only near shore / storm
+- [x] D. Side-by-side verification against the reference frames
+
+## 9. Render-quality harness  *(so every change is measured against the reference)*
+
+- [x] Deterministic shots: seeded RNG, HUD/enemies/particles off, fixed stage/position/camera/scroll
+      phase/cloud time (`harness/shots.json`, `__ace.shot()`)
+- [x] Matched reference frames via ffmpeg + hand-set sky/surface split lines, HUD crops/excludes
+      (`harness/extract_refs.py`, overlays in `harness/ref/*_overlay.png`)
+- [x] Headless renderer: one page load, all shots, PNG + depth-derived region masks, optional bench
+      (`harness/render.js`)
+- [x] Scorer: per-region EMD on luminance / chroma / hue / local contrast / multi-scale gradient
+      structure vs reference, raw scalars both sides, HTML report + contact sheet + history with deltas
+      (`harness/score.py`)
+- [x] ~45 live tunables + ablations (`src/devtools.js`), URL `?set=`, `harness/sweep.py` ranks values
+- [x] Baseline run scored; per-shot worst regions identified → drive Section 10 from the numbers
 
 ---
 
@@ -88,3 +138,142 @@ Legend: `[ ]` todo · `[x]` done · `[~]` partially done / follow-up noted
 - [ ] Tune difficulty for the denser waves with real play (only tested with autopilot)
 - [ ] Check frame rate on real hardware (ocean reflection pass + 10k sorted particles + 3 post passes)
 - [ ] Volumetric cloud banks to fly through (reference stage 2) — current clouds are sprites
+- **Section 6 done** (round 2: photoreal water/terrain, high-poly fighters, ~830 CU)
+  - Textures (Scenario Texture, 2048², seam-erased): ocean wave height → seamless normal map (wrap-around
+    Sobel), ocean foam, and new meadow / rock / canyon / dunes / snow albedos. PATINA Image-to-Maps
+    extracted 2048² normal + smoothness maps for each terrain; tilt re-centred and meadow/canyon seams
+    cross-faded so they tile.
+  - Ocean (`src/ocean.js`, replaces three.js Water): 4 Gerstner swells displacing a 320² grid, three
+    scrolling normal layers with distance fade, Fresnel reflection sampled from the sky panorama,
+    subsurface turquoise in sun-facing crests, sharp sun glitter, texture-driven crest foam; storm preset.
+  - Terrain: MeshStandardMaterial (IBL from the sky) with triplanar rock albedo + whiteout-blended
+    triplanar normals, ground normal map, PATINA roughness remapped to a natural 0.62–1 range, three-scale
+    ground albedo (macro / base / near detail), snow layer; grid density 230×240 → 320×330.
+  - Fighters: Rodin Gen-2.5 Extreme-High, 150k triangles each (was 15–30k), 4K PBR textures, built from
+    three views each (extra rear-3/4 and side views generated with GPT Image 2.5 from the originals).
+    Textures repacked PNG→JPEG inside the GLBs (56 MB → 21.6 MB). Orientation/nozzles re-measured.
+  - Removed primitive cone trees / cacti now that the textures carry vegetation.
+
+### Follow-ups (round 2)
+- [ ] Frame rate on real GPUs: three 150k-tri jets per enemy model in waves of up to 8 — consider a
+      decimated LOD (~25k) for enemies beyond ~300 m
+- [ ] First load is now ~55 MB; consider KTX2/Basis texture compression for the 2048² maps
+- **Section 7 A–C done** — bloom threshold 0.82→1.0 (emitters only), post-tonemap S-curve grade replaces
+  the HDR contrast lift, exposure 0.8, sky panorama ×0.62 with matching fog colour, sun 3.2 / ambient 0.38
+  / IBL 0.35 (was 2.6 / 0.9 / 0.9–1.15). 4096² PCF-soft sun shadow map following the player; terrain casts
+  via a displaced depth material. Afterburner: blue-white translucent core, glow ¼ size.
+  Measured (ocean frame): blown 11.6%→0.2% (ref 1%), sky sat 0.09→0.37 (ref 0.53), jet luma std
+  0.10→0.25 (ref 0.21), jet p5 0.68→0.21 (ref 0.22). Valley still lacks deep shadow (1.6% vs 30%) → item E.
+- **Section 7 D–H done** — Ocean: 6 non-harmonic Gerstner swells with slow amplitude groups, 4th
+  far-field normal layer so ripple texture survives to the horizon, Fresnel capped at 0.5, stronger sun
+  path, hazy horizon landmasses. Terrain: corridor walls ramp steeply (pow) into 300–470 m massifs,
+  winding river on the valley floor (dark glossy water), height-banded conifer forest zone, rock faces
+  ×0.85, rotated/hashed second albedo sample kills grid repetition. Aerial perspective: global
+  fog-chunk override — optical depth falls with height, desaturates toward cool grey before lifting to
+  the horizon colour. Clouds: 6–10-puff banks with sun-side/underside shading, fade in/out, flyable.
+  AA: 4× MSAA composer target + 5-tap soften in the finishing pass. Sea-rock props removed.
+  Measured vs reference (ocean / valley / canyon / snow / storm): blown 0.3/0.1/0.2/0.6/0.6% (ref 1/3/2.5/7/0.1);
+  deep-shadow 1.2/2.3/38/0.5/31% (ref 0.8/30/18/0/0.1); sat 0.32/0.25/0.69/0.26/0.43 (ref 0.42/0.52/0.46/0.25/0.10).
+  Canyon now darker than the reference and the storm darker than its (flat-lit) reference frame; the
+  valley's deep-shadow share is still well below the reference because our sun sits behind the camera
+  in most frames, where the reference frame has the sun ahead casting the near wall into shadow.
+
+### Follow-ups (round 3)
+- [ ] Valley: per-stage sun azimuth so one corridor wall is in shadow (reference stage-6 look)
+- [ ] Canyon/storm: lift ambient slightly (both now exceed the reference's shadow share)
+- [ ] Frame rate on real GPUs with MSAA + shadow map + 150k-tri jets — profile before tuning further
+- **Section 8 done** (round 4 — technique rebuild, no Scenario credits)
+  - Clouds (`src/clouds.js`): ray-marched slab, 56 steps at half resolution, depth-aware composite.
+    Density = 64³ Perlin-Worley base (+3 Worley octaves) remapped by a 256² weather map (coverage,
+    type) and a type-dependent height gradient, eroded by 32³ Worley detail (wispy bases, billowy
+    tops). Lighting = Beer-Lambert with 6-sample cone toward the sun, powder term, two-lobe
+    Henyey-Greenstein (g 0.62 / −0.22), height-graded ambient, aerial perspective on the clouds.
+    Per-stage coverage/altitude; stage 8 is a solid deck below the jet. Sprite banks removed.
+  - Terrain: four offline heightmaps (1024×2048, 5.2×10.4 km, periodic) — domain-warped ridged
+    multifractal + fBM, redistribution, carved wandering flight corridor with river, 400–700k droplet
+    hydraulic erosion + thermal erosion (numba). Exported 16-bit height + river, world normal, and
+    sediment/exposed-rock/flow masks. GPU displacement on a 360×420 grid with power-curve density
+    near the camera; materials zoned by slope, altitude and erosion masks (sediment soil on floors,
+    rock on eroded faces, forest band, snow with slope limit, wet gullies, river). CPU bilinear height
+    for gameplay. Sine-wave heightfield deleted.
+  - Ocean (`src/ocean.js`): two Phillips/Tessendorf spectrum normal cascades baked offline (320 m and
+    48 m, wind-aligned, slope RMS 0.14 / 0.10) + a rotated copy to kill tiling; Fresnel ×1.9 against
+    a distance-blurred sky lookup; GGX sun term with distance-growing roughness (broad soft band);
+    desaturated navy body; Gerstner swell reduced to 4 gentle components; foam only in the storm.
+  - Fixed along the way: terrain grid winding (back-face culled → invisible), GLSL3 flag on the cloud
+    material, cloud coverage remap, stage-8 cloud layer at player altitude (white-out).
+  - `Rererences/comparison_round4.jpg` has the side-by-side. Valley/canyon/snow now carry real
+    landform; ocean reads as sea; clouds are soft volumes with lit tops and shaded bases.
+
+### Follow-ups (round 4)
+- [ ] Ocean body is darker than the reference frame (dark 26% vs 1%): lift uDeep / sky mix a touch
+- [ ] Cloud undersides could be darker still; add in-cloud fog (currently the whiteout flash is disabled)
+- [ ] Half-res cloud pass shows jitter noise in motion — add temporal reprojection or a 3×3 blur
+- [ ] Terrain near-camera detail: a 3rd (0.25 m) detail normal layer for low passes
+- [ ] Frame rate on real GPUs: cloud march + 4× MSAA + shadow map + 150k-tri jets — profile
+- **Section 9 (harness) done** — `harness/` renders 12 deterministic shots on the real GPU (ANGLE/Metal,
+  ~30 s for a full run) and scores them against matched reference frames. Baseline 85.1%.
+  Findings so far, driven by the numbers:
+  - frame cost ~15 ms @1280×720 on M1 Pro; post stack is ~7 ms of it, clouds and shadows ~1 ms each
+  - clear-sky blue already matches the reference (chroma 46 vs 47); sky-region deficit = cloud cover
+  - sea: pale grey-blue body wins monotonically (#163f68 → #86a6c4, +2.7); stronger Fresnel wins
+  - clouds: slabs were caused by low-contrast base noise + steep coverage remap (shape followed the
+    weather map); lighting must stay ≲1.5× sun / ambient ~1 or ACES blows them out (r2 lesson);
+    cloud undersides need a high ambient floor + vertical occlusion; storm = sparse scud under the
+    panorama, not a blanket layer (+10.4 on storm_sky)
+  - terrain: darker/smoother wins slightly (sun, hemi, detail normals); forest darkness 0.35–0.4
+  - the scorer is insensitive to cloud *silhouette*; judge that from `sheet.png`, not the number
+- **Harness-driven tuning, runs r1–r7** (baseline 85.1% → r7 86.8%; ocean_low 83→90, storm_sky 82→90,
+  clouds_inside 94→96; valley/alpine/snow 80–84 flat; city_night 73 unchanged)
+  - fixed via the numbers: ocean normal-map swizzle (up component added to z → flat slab sea; +3.7 on
+    ocean_low once fixed), resetPlayer() wiping the jet tint, sky background path (replaced by a dome
+    shader with saturation/zenith), storm layer blanketing the panorama, cloud lighting overshoot (ACES)
+  - lessons: the scorer is sharp for tone/colour and blind to silhouette; sweep results depend on the
+    state they were measured in (the "brighter clouds" verdict flipped once shapes changed)
+  - current frame cost 16–18 ms @1280×720 on M1 Pro (post ≈ 7 ms of it)
+
+### Follow-ups (round 5)
+- [x] Terrain dynamic range: reference has sunlit faces/snow at p95 ≈ 98 and forest blacks at p5 ≈ 1;
+      ours compresses to 10–45. Needs brighter lit albedo + darker shadowed forest, not a global exposure move
+- [x] Cloud silhouettes: judge from sheets — bases still read as straight lines; add base-height jitter by
+      weather and taper the layer with distance more aggressively
+- [x] city_night: our neon-synthwave concept does not match the reference (realistic dusk coastal base) —
+      restyle or drop the shot from scoring
+- [x] Post stack ≈ 7 ms: bloom at quarter res / fewer mips, merge speed-blur + grade into one pass
+- [x] Jet: chroma 7 vs 20 — reference airframe picks up environment tint; raise metalness on the paint
+
+### Harness rounds r8–r18 (87.4% → 89.1%; sheet: `Rererences/comparison_round6_harness.jpg`)
+- [x] **Terrain zoning on a macro slope** (`textureLod` of the baked normal, ~30 m footprint): conifers now
+      hold the whole fjord wall up to ~70°, bare rock only on cliff faces; forest darkness 0.15. Before this
+      the fine-slope test rejected every steep texel, so the walls were bright meadow (forestDark sweep had
+      no effect on them — the number that exposed it).
+- [x] **Fjord water**: `terrain.sea` floods the valley floor with the ocean mesh (EMERALD VALLEY lakes at 21 m,
+      GLACIER LINE fjord at 17 m; calm, dark, sky-mix 0.6). Matches the reference stage-06 fjord; valley +1.5,
+      alpine +1.8. `groundAt()` clamps to the water level so props/SAMs/floor sit on it.
+- [x] **Sun elevation**: the day sun was taken from the panorama (63°); the reference lights from ~34° ahead.
+      Lowered (`SKIES.day.sun[1] = 0.31`) → cast shadows across the water and walls, glitter path, blown rims;
+      land shots +0.7…+1.9. Terrain also marches the heightmap toward the sun for self-shadow beyond the
+      shadow-map range (`terrain.shadow`), subtle at 34° but free.
+- [x] **Cloud tops**: the storm slab's dead-straight top was the weather map — coverage and the height-jitter
+      channel were correlated, so every cloudy cell topped out at `uTop`. Jitter now comes from a second,
+      offset weather lookup and the march bounds include the jitter margin; storm_sky 89.7 → 93.1.
+- [x] Storm layer thicker and sparser (160–700 m, cov 0.3, dens 1.3, jitter 0.6); sunset sky sat 0.7 (city +3.0).
+- [x] Sea glitter soft-limited (`spec/(1+0.2 spec)`): a low sun had blown the near sea white. Forward scatter
+      lobe 0.62 → 0.45 (less whiteout around the sun through cloud).
+- [x] Post: scene now renders into its own 4× MSAA target and is resolved once (`ScenePass`); bloom chain
+      pinned to a 320×180 base. The GPU timer query (ANGLE/Metal) attributes ~10 ms to bloom, but the
+      wall-clock frame interval is 16.7 ms with or without it — the timer is not trustworthy for per-pass
+      cost on this backend; use frame-interval A/B (`pp/fpsprobe.js`) for perf decisions.
+- [x] Regression flows re-run headless (title, `?auto&ff=200`, `?bot&ff=6&die`): no page errors, fjord
+      stage reached with terrain + water visible.
+- Sweeps that did **not** move the number (left as is): jet paint 0.27–0.7 and metalness; terrain.amb/hemi;
+  cloud.hJitter 0.1–0.9 (visual only); ocean.rough / ocean.sun / ocean.fresnel at the current sea colour.
+
+### Follow-ups (round 6)
+- [x] Sea colour: re-swept with normals + sun fixed — deep `#2c5080` with Fresnel share 1.5 (was `#86a6c4` / 4.0)
+      gives the reference's saturated blue; fjord 2.0 with a darker body, storm unchanged (r18: ocean_high +1.0)
+- [ ] Snow floor blows out to flat white at sun 3.8 (reference keeps blue shadow texture); per-stage exposure or
+      snow albedo 0.85
+- [ ] HARBOR DUSK props are still boxes with dot windows; needs real base/harbour meshes (Scenario) to match the
+      reference's industrial dusk coast
+- [ ] Cloud march cost grows with the jitter margin; profile with frame-interval A/B, not the timer query

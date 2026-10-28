@@ -1,0 +1,424 @@
+{
+  "_doc": "Deterministic evaluation shots. stage is 1-based. x/y = player position (m), dist = distance flown (terrain/ocean scroll phase), time = cloud/ocean animation phase (s). cam: 'chase' uses the game camera; or {pos, look, roll}. ref = timestamp in Rererences/Reference.mp4 of the matched frame; horizon = polyline (x,y in 1280x720) separating sky (above) from surface (below) in the reference frame; regions = which regions are scored. set = per-shot tunable overrides that describe the situation (not tuning).",
+  "refCrop": [
+    0,
+    118,
+    1280,
+    560
+  ],
+  "refExclude": [
+    [
+      0,
+      118,
+      200,
+      270
+    ],
+    [
+      1080,
+      118,
+      1280,
+      180
+    ]
+  ],
+  "shots": [
+    {
+      "name": "ocean_low",
+      "desc": "Low pass over open sea, islands on the horizon",
+      "stage": 1,
+      "x": 0,
+      "y": 30,
+      "dist": 900,
+      "time": 40,
+      "cam": "chase",
+      "ref": "00:01:04",
+      "horizon": [
+        [
+          0,
+          200
+        ],
+        [
+          1280,
+          200
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface",
+        "jet"
+      ]
+    },
+    {
+      "name": "ocean_high",
+      "desc": "Higher over the sea, cumulus field",
+      "stage": 1,
+      "x": 0,
+      "y": 120,
+      "dist": 2400,
+      "time": 55,
+      "cam": "chase",
+      "ref": "00:00:44",
+      "horizon": [
+        [
+          0,
+          188
+        ],
+        [
+          1280,
+          188
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface"
+      ],
+      "exclude": [
+        [
+          420,
+          140,
+          920,
+          215
+        ]
+      ]
+    },
+    {
+      "name": "valley_floor",
+      "desc": "Low in the green valley, cliffs both sides",
+      "stage": 3,
+      "x": 0,
+      "y": 55,
+      "dist": 1500,
+      "time": 30,
+      "cam": "chase",
+      "ref": "00:05:40",
+      "horizon": [
+        [
+          0,
+          190
+        ],
+        [
+          350,
+          232
+        ],
+        [
+          700,
+          300
+        ],
+        [
+          1000,
+          280
+        ],
+        [
+          1280,
+          250
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface",
+        "jet"
+      ]
+    },
+    {
+      "name": "alpine_fjord",
+      "desc": "Dark fjord walls, snow peaks, river",
+      "stage": 7,
+      "x": 0,
+      "y": 70,
+      "dist": 1200,
+      "time": 30,
+      "cam": "chase",
+      "ref": "00:05:18",
+      "horizon": [
+        [
+          0,
+          110
+        ],
+        [
+          300,
+          232
+        ],
+        [
+          560,
+          290
+        ],
+        [
+          800,
+          200
+        ],
+        [
+          1050,
+          232
+        ],
+        [
+          1280,
+          150
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface"
+      ]
+    },
+    {
+      "name": "snow_peaks",
+      "desc": "Snow field material test (all snow, no fjord water)",
+      "stage": 7,
+      "x": 0,
+      "y": 160,
+      "dist": 3000,
+      "time": 60,
+      "cam": "chase",
+      "ref": "00:13:02",
+      "horizon": [
+        [
+          0,
+          140
+        ],
+        [
+          450,
+          250
+        ],
+        [
+          800,
+          400
+        ],
+        [
+          1100,
+          560
+        ],
+        [
+          1280,
+          560
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface",
+        "jet"
+      ],
+      "set": {
+        "terrain.snow": -70,
+        "terrain.forest1": -1,
+        "terrain.sea": -1000
+      }
+    },
+    {
+      "name": "canyon_sunset",
+      "desc": "Red canyon at sunset",
+      "stage": 4,
+      "x": 0,
+      "y": 80,
+      "dist": 2000,
+      "time": 30,
+      "cam": "chase",
+      "ref": "00:02:35",
+      "horizon": [
+        [
+          0,
+          118
+        ],
+        [
+          380,
+          118
+        ],
+        [
+          450,
+          232
+        ],
+        [
+          700,
+          232
+        ],
+        [
+          760,
+          118
+        ],
+        [
+          1280,
+          118
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface",
+        "jet"
+      ]
+    },
+    {
+      "name": "clouds_above",
+      "desc": "Cloud layer seen from just below, terrain beneath",
+      "stage": 3,
+      "x": 0,
+      "y": 175,
+      "dist": 1800,
+      "time": 45,
+      "cam": {
+        "pos": [
+          0,
+          182,
+          22
+        ],
+        "look": [
+          0,
+          230,
+          -400
+        ]
+      },
+      "ref": "00:01:40",
+      "horizon": [
+        [
+          0,
+          150
+        ],
+        [
+          300,
+          250
+        ],
+        [
+          640,
+          330
+        ],
+        [
+          900,
+          420
+        ],
+        [
+          1280,
+          560
+        ]
+      ],
+      "regions": [
+        "sky"
+      ]
+    },
+    {
+      "name": "clouds_inside",
+      "desc": "Inside / between cloud wisps",
+      "stage": 1,
+      "x": 0,
+      "y": 175,
+      "dist": 1800,
+      "time": 45,
+      "cam": "chase",
+      "set": {
+        "cloud.bottom": 120,
+        "cloud.top": 420,
+        "cloud.coverage": 0.6
+      },
+      "ref": "00:01:22",
+      "horizon": [
+        [
+          0,
+          720
+        ],
+        [
+          1280,
+          720
+        ]
+      ],
+      "regions": [
+        "sky"
+      ]
+    },
+    {
+      "name": "storm_sea",
+      "desc": "Storm sea under overcast",
+      "stage": 6,
+      "x": 0,
+      "y": 60,
+      "dist": 1000,
+      "time": 30,
+      "cam": "chase",
+      "ref": "00:07:10",
+      "horizon": [
+        [
+          0,
+          235
+        ],
+        [
+          640,
+          270
+        ],
+        [
+          1280,
+          300
+        ]
+      ],
+      "regions": [
+        "sky"
+      ]
+    },
+    {
+      "name": "storm_sky",
+      "desc": "Grey overcast cloud deck",
+      "stage": 6,
+      "x": 0,
+      "y": 150,
+      "dist": 1000,
+      "time": 30,
+      "cam": {
+        "pos": [
+          0,
+          158,
+          22
+        ],
+        "look": [
+          0,
+          200,
+          -400
+        ]
+      },
+      "ref": "00:08:30",
+      "horizon": [
+        [
+          0,
+          720
+        ],
+        [
+          1280,
+          720
+        ]
+      ],
+      "regions": [
+        "sky"
+      ]
+    },
+    {
+      "name": "dunes",
+      "desc": "Desert dunes (no reference match; render only)",
+      "stage": 2,
+      "x": 0,
+      "y": 50,
+      "dist": 800,
+      "time": 30,
+      "cam": "chase",
+      "ref": null,
+      "regions": []
+    },
+    {
+      "name": "city_night",
+      "desc": "Neon harbour at night",
+      "stage": 5,
+      "x": 0,
+      "y": 80,
+      "dist": 900,
+      "time": 30,
+      "cam": "chase",
+      "ref": "00:06:10",
+      "horizon": [
+        [
+          0,
+          300
+        ],
+        [
+          1280,
+          300
+        ]
+      ],
+      "regions": [
+        "sky",
+        "surface"
+      ]
+    }
+  ]
+}
