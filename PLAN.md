@@ -274,6 +274,79 @@ Sprite clusters, sine-wave heightfields and tiled bump maps cannot produce these
       gives the reference's saturated blue; fjord 2.0 with a darker body, storm unchanged (r18: ocean_high +1.0)
 - [ ] Snow floor blows out to flat white at sun 3.8 (reference keeps blue shadow texture); per-stage exposure or
       snow albedo 0.85
-- [ ] HARBOR DUSK props are still boxes with dot windows; needs real base/harbour meshes (Scenario) to match the
+- [x] HARBOR DUSK props are still boxes with dot windows; needs real base/harbour meshes (Scenario) to match the
       reference's industrial dusk coast
 - [ ] Cloud march cost grows with the jitter margin; profile with frame-interval A/B, not the timer query
+
+### Round 7 — "terrain still sucks and water still looks unnatural" (r19–r24, 88.7%)
+Diagnosed from 1:1 crops against the reference rather than the score (which prefers the brighter, flatter look):
+- [x] **Planar water reflections** (`renderReflection`, `ScenePass`): the scene mirrored through the water plane
+      into a 640×360 target with an oblique near plane (Lengyel) so nothing below the surface shows; the ocean
+      shader samples it with the wave normal as distortion. Fjord water now shows the dark walls and the jet
+      instead of a pale sky mirror next to black terrain — the single biggest "unnatural" cue. +~2 ms/frame.
+- [x] Sea: Fresnel share tapers with distance (far sea stays blue instead of horizon haze), wave faces toward the
+      sun read lighter, glitter clamp relaxed, near-field normal detail ×1.6 on open sea.
+- [x] **Real forest**: PATINA Material conifer canopy (2048², albedo + normal + roughness) replaces the darkened
+      meadow on the forest band — two rotated copies, 110 m repeat; canopy normal blended into the ground normal.
+      Alpine ground above the treeline is a PATINA tundra/scree material instead of meadow.
+- [x] Valley ground above the tree line is tundra/scree too (the meadow read as a chartreuse blanket on the
+      wall tops in play); canopy tinted cool (×0.72/0.88/0.98, brightness 0.75) toward the reference's blue-black.
+- [x] Sea wavelets: mid cascade ×0.5, mirror distortion doubled, sun shading 0.4 + 0.75·N·L, sparse whitecaps
+      (0.22) on the open day sea — the 1:1 crop now shows the reference's rippled light/dark pattern and glints.
+- [x] Hard fjord lighting: terrain ambient 1.2 → 0.7 (per stage: dunes 1.0, canyon 0.9, dusk 1.2), sun 3.8 → 4.4,
+      hemi 0.3, ground albedo 1.0; detail normals held out to 1.6 km; snow broken by strata/gullies; valley fog
+      pushed out (650–3400 / 700–3600).
+- Scorer note: these moves cost ~0.3 on the number (it rewards brightness) while the sheets moved toward the
+  reference — when the two disagree, the sheet wins. `Rererences/comparison_round7_harness.jpg`.
+
+### Follow-ups (round 7)
+- [ ] Valley floors: the meadow banks still read as bright yellow-green; a darker moss/grass PATINA material
+      (or tundra for the clearings) would match the reference's black-green shoreline
+- [x] Sea glitter is physically placed (mirror point below frame at a 34° sun); the reference shows a stylised
+      glitter band near the horizon — consider an anisotropic highlight stretched toward the sun
+- [ ] Reflection pass skips the volumetric clouds (painted sky only) — acceptable; revisit if cloud shadows on
+      water are added
+- [ ] Rock on the fjord walls is still smooth at ridge scale; a sharper ridged pass in gen_terrain (less thermal
+      erosion for alpine) would give the reference's craggy skyline
+
+### Round 8 — "terrain textures still look pretty bad" (r25–r27, 89.1%)
+Diagnosed from 1:1 crops: the old textures were *aerial photos with landforms baked in* (dune ridges, snowy
+mountains, boulder fields) tiled at 150–420 m and projected flat onto slopes — so walls smeared into
+streaks, the baked forms repeated as wallpaper, and the colour map fought the real heightmap shading.
+- [x] **Material set regenerated with Scenario PATINA Material** (2048², albedo + normal + roughness + height):
+      `cliff` (granite strata — fjord walls), `canyon` (red sandstone strata — canyon walls), `desert` (cracked
+      clay floor), `sand` (wind ripples, no dunes), `snow` (sastrugi). These are *surfaces*; the landform comes
+      from the heightmap. `scratchpad/convert_patina.py` bakes height-derived cavity AO into the albedo and
+      stores roughness as smoothness like the other PATINA maps.
+- [x] Shader: ground and canopy albedo are triplanar (planar XZ smeared every wall), rock uses two rotated
+      copies so the strata repeat never lines up, snow is a real material (albedo + normal) instead of a flat
+      colour, the rock/ground boundary is moved by macro variation so exposure is patchy, per-stage `alb`
+      (pale sand/clay blew out under the full sun) and `amb`.
+- [x] Rock tiles 110–130 m, sand 120 m, desert 160 m; snow brightness 0.85.
+- Score +0.3 overall (city/dusk +4.5 from the sand floor, canyon +0.7); the crops moved more than the number.
+  `Rererences/comparison_round8_harness.jpg`.
+
+### Follow-ups (round 8)
+- [x] The near field (< 150 m) still has no sub-metre detail layer: a third, 2–4 m detail normal for low passes
+- [x] `meadow` is unused now (valley floors are tundra); a darker moss/grass PATINA material for the EMERALD
+      VALLEY banks would keep the stage name honest
+- [x] Craggier ridgelines: regenerate alpine/valley heightmaps with less thermal erosion and a sharper ridged pass
+- [x] Cloud shadows on terrain (project the weather map along the sun) — the reference has moving cloud shadows
+
+### Round 9 — the follow-up list, worked through (r28–r31)
+- [x] **Cloud shadows** on terrain and water: the cloud march's weather lookup projected along the sun from the
+      ground point up to the layer's mid height (`uCloudP`: coverage, softness, height, strength); multiplies the
+      sun term only, so shadowed ground keeps its sky light. Off when the layer is off or below the player.
+- [x] **Near-field detail**: the same ground / rock normal maps sampled 6–7× finer inside 260 m (sub-metre crust
+      for low passes), faded out with distance.
+- [x] **Craggier skylines**: `gen_terrain_v2.py` — more ridge weight (0.86 / 0.92), sharper crests, 9 octaves,
+      talus 1.6–1.8 with 2–3 thermal passes instead of 5–6. Alpine hmax 795 → 873, valley 677 → 738; the corridor
+      floor still sits at 15–21 m so the fjord levels (17 / 21 m) hold.
+- [x] **Moss shoreline** (PATINA) for the EMERALD VALLEY banks instead of tundra.
+- [x] **Sun glitter path** on water: glints gather along the azimuth toward the sun near the horizon, using a
+      low "glitter sun" so the band sits where the reference puts it; cloud-shadowed.
+- [x] **HARBOR DUSK props**: three Meshy T2.5 Smart-Topology GLBs (warehouse + gantry crane, fuel-tank farm, control
+      tower + radar; ~8k tris, 2K PBR) replace the neon boxes; shallow harbour water (sea 3 m) with props kept
+      out of it. `prepProp()` scales to a footprint and grounds each model.
+- Real frame interval stays 16.7 ms on every stage (vsync); the GPU timer's 20–28 ms numbers remain
+  over-reports on ANGLE/Metal. `Rererences/comparison_round9_harness.jpg`.

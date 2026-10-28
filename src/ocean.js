@@ -59,8 +59,9 @@ const FRAG = /* glsl */`
   uniform mat3 uSkyRot;
   uniform vec3 uSunDir, uSunColor, uDeep, uShallow, uSkyTint;
   uniform sampler2D uRefl; uniform float uReflMix; varying vec4 vRefl;
+  uniform sampler2D uWeather; uniform vec4 uCloudP; uniform float uWeatherScale;
   uniform vec2 uWind;
-  uniform float uTime, uFoamAmt, uSunStrength, uSkyMix, uRoughBase, uFresMul, uDetailMul;
+  uniform float uTime, uDist, uFoamAmt, uSunStrength, uSkyMix, uRoughBase, uFresMul, uDetailMul;
   varying vec3 vWorld; varying vec2 vP; varying vec3 vGN; varying float vCrest;
   #include <fog_pars_fragment>
   const float PI = 3.14159265;
@@ -102,6 +103,16 @@ const FRAG = /* glsl */`
     float sss = smoothstep(0.55, 1.0, vCrest) * (0.3 + 0.7 * sunBack) * max(uSunDir.y, 0.1);
     vec3 body = uDeep * (0.4 + 0.75 * NdL) + uShallow * sss * 0.35;   // wave faces toward the sun read lighter
     vec3 col = mix(body, sky, F * uSkyMix);
+    // cloud shadow: the weather map projected along the sun, same lookup as the cloud march
+    float cs = 1.0;
+    if (uCloudP.w > 0.001 && uSunDir.y > 0.05) {
+      float tc = max(uCloudP.z - vWorld.y, 0.0) / uSunDir.y;
+      vec2 cq = vec2(vWorld.x + uSunDir.x * tc, uDist - (vWorld.z + uSunDir.z * tc));
+      float wc = texture2D(uWeather, cq / uWeatherScale + vec2(0.5)).r;
+      float c0 = 1.0 - uCloudP.x * 1.1;
+      cs = 1.0 - smoothstep(c0 - uCloudP.y, c0 + uCloudP.y, wc) * uCloudP.w;
+    }
+    col *= mix(0.6, 1.0, cs);
 
     // sun: GGX band whose roughness grows with distance (broad soft glitter path, not sparkle)
     vec3 H = normalize(V + uSunDir);
@@ -111,7 +122,14 @@ const FRAG = /* glsl */`
     float Fs = 0.02 + 0.98 * pow(1.0 - max(dot(V, H), 0.0), 5.0);
     float spec = D * Fs / (4.0 * NdV * max(NdL, 1e-3) + 0.05) * NdL;
     spec = spec / (1.0 + spec * 0.12);   // soft-limit the glitter: a low sun must not blow the whole near sea to white
-    col += uSunColor * spec * uSunStrength * 0.9;
+    col += uSunColor * spec * uSunStrength * 0.9 * cs;
+    // stylised sun path: glints gather along the azimuth toward the sun near the horizon (the reference's glitter band)
+    vec2 vh = normalize(vec2(V.x, V.z)), lh = normalize(vec2(uSunDir.x, uSunDir.z));
+    float path = pow(max(dot(-vh, lh), 0.0), 14.0) * smoothstep(0.75, 0.97, 1.0 - NdV);
+    vec3 L2 = normalize(vec3(uSunDir.x, 0.14, uSunDir.z));
+    vec3 H2 = normalize(V + L2);
+    float glint = pow(max(dot(N, H2), 0.0), 320.0) * path * 5.0 * cs;
+    col += uSunColor * glint * uSunStrength;
 
     // storm foam from the spectrum crests
     if (uFoamAmt > 0.001) {
@@ -140,6 +158,7 @@ export function createOcean({ n0, n1, foamMap, size = 9000, segments = 200 }) {
     uSkyTint: { value: new THREE.Color(1, 1, 1) }, uSkyMix: { value: 1 }, uWind: { value: new THREE.Vector2(0.9, 3.0) },
     uFoamAmt: { value: 0 }, uSunStrength: { value: 1 }, uRoughBase: { value: 0.09 }, uFresMul: { value: 4.0 }, uDetailMul: { value: 1 },
     uRefl: { value: null }, uReflMat: { value: new THREE.Matrix4() }, uReflMix: { value: 0 },
+    uWeather: { value: null }, uWeatherScale: { value: 5000 }, uCloudP: { value: new THREE.Vector4(0, 0.16, 500, 0) },
   }]);
   uniforms.uN0.value = n0; uniforms.uN1.value = n1; uniforms.uFoam.value = foamMap;
   const mat = new THREE.ShaderMaterial({ uniforms, vertexShader: VERT, fragmentShader: FRAG, fog: true });
